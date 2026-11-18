@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>UI Previewer Sandbox</title>
+  <title>UI Previewer + AI Editor</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -25,23 +25,59 @@
 
       <div class="divider"></div>
 
-      <button id="btnDesktop" class="btn active" title="Tampilan Desktop">🖥️ Desktop</button>
-      <button id="btnMobile" class="btn" title="Tampilan HP">📱 Phone</button>
-      <button id="btnForceShow" class="btn accent" title="Paksa elemen tersembunyi (display: none) agar tampil" disabled>
-        👁️ Force Show UI
-      </button>
+      <button id="btnDesktop" class="btn active">🖥️ Desktop</button>
+      <button id="btnMobile" class="btn">📱 Phone</button>
+      <button id="btnForceShow" class="btn accent" disabled>👁️ Force Show</button>
+      <button id="btnToggleAI" class="btn ai-btn" disabled>✨ AI Fixer</button>
     </div>
   </header>
 
-  <main class="workspace">
-    <div id="emptyState" class="empty-state">
-      <h2>Belum ada folder UI yang dimuat</h2>
-      <p>Klik tombol <strong>Pilih Folder UI</strong> di atas untuk memuat folder project HTML/CSS/JS kamu.</p>
-    </div>
+  <main class="main-layout">
+    <section class="workspace">
+      <div id="emptyState" class="empty-state">
+        <h2>Belum ada folder UI yang dimuat</h2>
+        <p>Klik <strong>Pilih Folder UI</strong> di atas untuk memuat project HTML/CSS/JS kamu.</p>
+      </div>
 
-    <div id="previewWrapper" class="preview-wrapper desktop hidden">
-      <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
-    </div>
+      <div id="previewWrapper" class="preview-wrapper desktop hidden">
+        <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+      </div>
+    </section>
+
+    <!-- Panel AI Editor & Debugger -->
+    <aside id="aiPanel" class="ai-panel hidden">
+      <div class="panel-header">
+        <h3>✨ AI Code Fixer (Gemini)</h3>
+        <button id="btnCloseAI" class="icon-btn">✕</button>
+      </div>
+
+      <div class="panel-body">
+        <div class="form-group">
+          <label>Gemini API Key (Tersimpan Lokal di Browser)</label>
+          <input type="password" id="apiKeyInput" placeholder="Masukkan AIzaSy..." />
+        </div>
+
+        <div class="form-group">
+          <label>Pilih File yang Mau Diperbaiki / Diedit</label>
+          <select id="editFileSelector" class="select-input full"></select>
+        </div>
+
+        <div class="form-group">
+          <label>Perintah Perbaikan ke AI</label>
+          <textarea id="aiPrompt" rows="4" placeholder="Contoh: Perbaiki path gambar icon aplikasi supaya muncul, atau tambahkan aplikasi baru di home screen..."></textarea>
+        </div>
+
+        <button id="btnRunAI" class="btn primary full">🚀 Perbaiki & Update Preview</button>
+        <div id="aiStatus" class="status-text"></div>
+
+        <div class="divider-h"></div>
+
+        <div class="form-group">
+          <label>Log Asset / Gambar Tidak Ketemu (Debug)</label>
+          <div id="missingLog" class="debug-box">Belum ada log error aset...</div>
+        </div>
+      </div>
+    </aside>
   </main>
 
   <script src="app.js"></script>
