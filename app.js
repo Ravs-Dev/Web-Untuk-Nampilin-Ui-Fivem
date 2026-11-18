@@ -9,21 +9,34 @@ const btnMobile = document.getElementById("btnMobile");
 const btnForceShow = document.getElementById("btnForceShow");
 
 let uploadedFiles = new Map();
-let blobUrls = [];
+let fileBlobMap = new Map(); // Menyimpan path -> Blob URL semua file
 let forceShowEnabled = false;
 
-// Bersihkan Blob URL lama agar memori tetap ringan
+// Bersihkan semua Blob URL lama
 function cleanupBlobs() {
-  blobUrls.forEach((url) => URL.revokeObjectURL(url));
-  blobUrls = [];
+  fileBlobMap.forEach((url) => URL.revokeObjectURL(url));
+  fileBlobMap.clear();
 }
 
 // Normalisasi path file relatif
 function resolvePath(basePath, relativePath) {
-  if (/^(https?:|data:|blob:|#)/i.test(relativePath)) return relativePath;
-  const cleanRel = relativePath.split("?")[0].split("#")[0];
+  if (!relativePath || /^(https?:|data:|blob:|#)/i.test(relativePath)) return relativePath;
+  
+  // Tangani format nui://nama-resource/html/...
+  let cleanRel = relativePath.split("?")[0].split("#")[0];
+  if (cleanRel.startsWith("nui://")) {
+    const parts = cleanRel.replace("nui://", "").split("/");
+    parts.shift(); // buang nama resource
+    return parts.join("/");
+  }
+
+  // Tangani path yang diawali slash (misal: /img/icon.png -> relatif ke folder html)
+  if (cleanRel.startsWith("/")) {
+    cleanRel = cleanRel.substring(1);
+  }
+
   const stack = basePath.split("/");
-  stack.pop(); // hapus nama file HTML saat ini
+  stack.pop();
 
   const parts = cleanRel.split("/");
   for (const part of parts) {
@@ -34,26 +47,45 @@ function resolvePath(basePath, relativePath) {
   return stack.join("/");
 }
 
-// Ganti url(...) di dalam file CSS dengan Blob URL aset gambar/font
+// Cari Blob URL yang paling cocok berdasarkan path atau nama file
+function findBlobUrl(basePath, rawPath) {
+  if (!rawPath || /^(https?:|data:|blob:|#)/i.test(rawPath)) return null;
+  
+  const resolved = resolvePath(basePath, rawPath);
+  if (fileBlobMap.has(resolved)) return fileBlobMap.get(resolved);
+
+  // Fallback: cari berdasarkan akhiran path (misal "img/apps/mail.png" cocok dengan "html/img/apps/mail.png")
+  const cleanTarget = rawPath.replace(/^(\.\/|\.\.\/|\/|nui:\/\/[^/]+\/)+/, "").split("?")[0];
+  for (const [storedPath, blobUrl] of fileBlobMap.entries()) {
+    if (storedPath.endsWith(cleanTarget)) {
+      return blobUrl;
+    }
+  }
+  return null;
+}
+
+// Ganti url(...) di dalam file CSS
 async function processCssContent(cssFile, cssPath) {
   let text = await cssFile.text();
   const urlRegex = /url\(['"]?([^'")]+)['"]?\)/g;
 
   return text.replace(urlRegex, (match, rawUrl) => {
-    const resolved = resolvePath(cssPath, rawUrl.trim());
-    const targetFile = uploadedFiles.get(resolved);
-    if (targetFile) {
-      const blob = URL.createObjectURL(targetFile);
-      blobUrls.push(blob);
-      return `url("${blob}")`;
-    }
-    return match;
+    const blob = findBlobUrl(cssPath, rawUrl.trim());
+    return blob ? `url("${blob}")` : match;
   });
 }
 
-// Render file HTML yang dipilih ke dalam iframe
+// Render file HTML ke dalam iframe
 async function renderHtml(htmlPath) {
   cleanupBlobs();
+
+  // Buat Blob URL untuk semua file aset terlebih dahulu
+  for (const [path, file] of uploadedFiles.entries()) {
+    if (!path.endsWith(".html") && !path.endsWith(".css")) {
+      fileBlobMap.set(path, URL.createObjectURL(file));
+    }
+  }
+
   const htmlFile = uploadedFiles.get(htmlPath);
   if (!htmlFile) return;
 
@@ -73,7 +105,7 @@ async function renderHtml(htmlPath) {
       const processedCss = await processCssContent(cssFile, resolved);
       const cssBlob = new Blob([processedCss], { type: "text/css" });
       const cssUrl = URL.createObjectURL(cssBlob);
-      blobUrls.push(cssUrl);
+      fileBlobMap.set(resolved, cssUrl);
       link.setAttribute("href", cssUrl);
     }
   }
@@ -82,33 +114,113 @@ async function renderHtml(htmlPath) {
   const scripts = doc.querySelectorAll("script[src]");
   for (const script of scripts) {
     const src = script.getAttribute("src");
-    if (!src) continue;
-    const resolved = resolvePath(htmlPath, src);
-    const jsFile = uploadedFiles.get(resolved);
-
-    if (jsFile) {
-      const jsUrl = URL.createObjectURL(jsFile);
-      blobUrls.push(jsUrl);
-      script.setAttribute("src", jsUrl);
-    }
+    const blob = findBlobUrl(htmlPath, src);
+    if (blob) script.setAttribute("src", blob);
   }
 
-  // 3. Proses semua tag <img src="..."> dan <source src="...">
+  // 3. Proses semua tag media di HTML awal
   const mediaTags = doc.querySelectorAll("img[src], source[src], video[src], audio[src]");
   for (const tag of mediaTags) {
     const src = tag.getAttribute("src");
-    if (!src) continue;
-    const resolved = resolvePath(htmlPath, src);
-    const mediaFile = uploadedFiles.get(resolved);
-
-    if (mediaFile) {
-      const mediaUrl = URL.createObjectURL(mediaFile);
-      blobUrls.push(mediaUrl);
-      tag.setAttribute("src", mediaUrl);
-    }
+    const blob = findBlobUrl(htmlPath, src);
+    if (blob) tag.setAttribute("src", blob);
   }
 
-  // 4. Jika tombol Force Show aktif, paksa elemen yang hidden agar tampil
+  // 4. Suntikkan Runtime Interceptor di paling atas <head> agar gambar dinamis & fetch JS ikut terbaca
+  const blobMappingObj = Object.fromEntries(fileBlobMap);
+  const interceptorScript = doc.createElement("script");
+  interceptorScript.textContent = `
+    (function() {
+      const FILE_MAP = ${JSON.stringify(blobMappingObj)};
+      const HTML_BASE = ${JSON.stringify(htmlPath)};
+
+      function lookupAsset(rawUrl) {
+        if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
+        if (/^(https?:|data:|blob:|#)/i.test(rawUrl)) return rawUrl;
+
+        let clean = rawUrl.split("?")[0].split("#")[0];
+        if (clean.startsWith("nui://")) {
+          const parts = clean.replace("nui://", "").split("/");
+          parts.shift();
+          clean = parts.join("/");
+        }
+        clean = clean.replace(/^(\\.\\/|\\.\\.\\/|\\/)+/, "");
+
+        // Cek exact match relatif terhadap folder HTML
+        const baseDir = HTML_BASE.includes("/") ? HTML_BASE.substring(0, HTML_BASE.lastIndexOf("/") + 1) : "";
+        if (FILE_MAP[baseDir + clean]) return FILE_MAP[baseDir + clean];
+        if (FILE_MAP[clean]) return FILE_MAP[clean];
+
+        // Cek suffix match
+        for (const key in FILE_MAP) {
+          if (key.endsWith("/" + clean) || key === clean) {
+            return FILE_MAP[key];
+          }
+        }
+        return rawUrl;
+      }
+
+      // Intercept perubahan atribut src pada elemen dinamis (img, video, audio, source)
+      const origSetAttribute = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function(name, value) {
+        if (name.toLowerCase() === "src" && typeof value === "string") {
+          value = lookupAsset(value);
+        }
+        return origSetAttribute.call(this, name, value);
+      };
+
+      const imgSrcDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+      if (imgSrcDesc && imgSrcDesc.set) {
+        Object.defineProperty(HTMLImageElement.prototype, "src", {
+          set: function(val) {
+            imgSrcDesc.set.call(this, lookupAsset(val));
+          },
+          get: imgSrcDesc.get
+        });
+      }
+
+      // Pantau elemen yang disuntikkan lewat innerHTML menggunakan MutationObserver
+      const observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          m.addedNodes.forEach((node) => {
+            if (node.nodeType !== 1) return;
+            if (node.tagName === "IMG" && node.getAttribute("src")) {
+              const mapped = lookupAsset(node.getAttribute("src"));
+              if (mapped !== node.getAttribute("src")) node.setAttribute("src", mapped);
+            }
+            node.querySelectorAll && node.querySelectorAll("img[src]").forEach((img) => {
+              const raw = img.getAttribute("src");
+              const mapped = lookupAsset(raw);
+              if (mapped !== raw) img.setAttribute("src", mapped);
+            });
+          });
+        }
+      });
+      window.addEventListener("DOMContentLoaded", () => {
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
+
+      // Intercept fetch() untuk file JSON/lokal dan cegah error NUI callback
+      const origFetch = window.fetch;
+      window.fetch = async function(input, init) {
+        const url = typeof input === "string" ? input : (input && input.url);
+        if (url && !url.startsWith("blob:") && !url.startsWith("data:")) {
+          const mapped = lookupAsset(url);
+          if (mapped !== url) {
+            return origFetch(mapped, init);
+          }
+          // Jika fetch mengarah ke NUI callback Lua (misal https://nama-resource/getApps), kembalikan response kosong agar JS tidak crash
+          if (url.startsWith("https://") && !url.includes(".")) {
+            return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+        }
+        return origFetch(input, init);
+      };
+    })();
+  `;
+  doc.head.insertBefore(interceptorScript, doc.head.firstChild);
+
+  // 5. Force Show UI jika diaktifkan
   if (forceShowEnabled) {
     const overrideStyle = doc.createElement("style");
     overrideStyle.textContent = `
@@ -129,7 +241,7 @@ async function renderHtml(htmlPath) {
   btnForceShow.disabled = false;
 }
 
-// Event saat user memilih folder
+// Event pilih folder
 folderInput.addEventListener("change", (e) => {
   const files = Array.from(e.target.files);
   if (!files.length) return;
@@ -139,7 +251,6 @@ folderInput.addEventListener("change", (e) => {
   const htmlFiles = [];
 
   files.forEach((file) => {
-    // Hilangkan nama folder root terluar agar path relatif selalu konsisten
     const fullPath = file.webkitRelativePath;
     const relativePath = fullPath.substring(fullPath.indexOf("/") + 1);
     uploadedFiles.set(relativePath, file);
@@ -154,7 +265,6 @@ folderInput.addEventListener("change", (e) => {
     return;
   }
 
-  // Urutkan agar index.html muncul paling atas
   htmlFiles.sort((a, b) => {
     if (a.endsWith("index.html")) return -1;
     if (b.endsWith("index.html")) return 1;
@@ -172,12 +282,10 @@ folderInput.addEventListener("change", (e) => {
   renderHtml(htmlFiles[0]);
 });
 
-// Ganti file HTML jika di folder ada lebih dari satu halaman
 htmlSelector.addEventListener("change", (e) => {
   if (e.target.value) renderHtml(e.target.value);
 });
 
-// Switch tampilan Desktop / Phone
 btnDesktop.addEventListener("click", () => {
   previewWrapper.className = "preview-wrapper desktop";
   btnDesktop.classList.add("active");
@@ -190,7 +298,6 @@ btnMobile.addEventListener("click", () => {
   btnDesktop.classList.remove("active");
 });
 
-// Toggle Force Show UI
 btnForceShow.addEventListener("click", () => {
   forceShowEnabled = !forceShowEnabled;
   btnForceShow.classList.toggle("active", forceShowEnabled);
