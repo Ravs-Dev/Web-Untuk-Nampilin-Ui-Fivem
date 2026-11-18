@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UI Previewer Sandbox</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>UI Previewer</h1>
+    </div>
+
+    <div class="controls">
+      <label class="btn primary">
+        📂 Pilih Folder UI
+        <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
+      </label>
+
+      <select id="htmlSelector" class="select-input" disabled>
+        <option value="">Pilih file HTML...</option>
+      </select>
+
+      <div class="divider"></div>
+
+      <button id="btnDesktop" class="btn active" title="Tampilan Desktop">🖥️ Desktop</button>
+      <button id="btnMobile" class="btn" title="Tampilan HP">📱 Phone</button>
+      <button id="btnForceShow" class="btn accent" title="Paksa elemen tersembunyi (display: none) agar tampil" disabled>
+        👁️ Force Show UI
+      </button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <div id="emptyState" class="empty-state">
+      <h2>Belum ada folder UI yang dimuat</h2>
+      <p>Klik tombol <strong>Pilih Folder UI</strong> di atas untuk memuat folder project HTML/CSS/JS kamu.</p>
+    </div>
+
+    <div id="previewWrapper" class="preview-wrapper desktop hidden">
+      <iframe id="previewFrame" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
